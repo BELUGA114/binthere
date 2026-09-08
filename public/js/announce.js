@@ -16,7 +16,13 @@
   }
   if (dismissed) return;
 
-  bar.hidden = false;
+  // i18n.js (a module dependency of app.js) runs after this classic deferred
+  // script; wait for it to translate the bar's text before revealing it, so a
+  // Chinese visitor never sees English flash. If that module never loads, the
+  // bar stays hidden — degraded, but never shown in the wrong language.
+  const reveal = function () { bar.hidden = false; };
+  if (document.documentElement.dataset.i18nReady === '1') reveal();
+  else document.addEventListener('i18n:ready', reveal, { once: true });
 
   const close = document.getElementById('announce-close');
   if (close) {
