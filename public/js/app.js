@@ -9,6 +9,7 @@ import { validateHead, validatePaste, buildAAD, EXPIRE_SECONDS } from './format.
 import { renderMarkdown } from './markdown.js';
 import { looksLikeCode, highlightInto } from './highlight.js';
 import { $, showView, toast, copyText, flashCopied, pill } from './ui.js';
+import { t, onLangChange } from './i18n.js';
 
 // Module-level state referenced by helpers that may run during the top-level
 // route dispatch below. Declared here (not near the timer helpers further down)
@@ -16,6 +17,15 @@ import { $, showView, toast, copyText, flashCopied, pill } from './ui.js';
 // and called `stopExpiryTimer()` before this line was reached — turning every
 // view into a stuck "loading…" screen.
 let expiryTimer = null;
+
+// State for re-translating the on-screen view when the language is switched
+// (i18n.js re-applies the static strings, then calls back here). Each view
+// records just enough to re-derive its dynamic labels; see retranslate().
+let lastStatus = null;  // { key, isError, reveal } — the status screen's message
+let pwScreen = null;    // { isBurn, decrypting } — the password prompt's labels
+let lastPaste = null;   // { paste, result } — the rendered paste's pills/buttons
+let pasteRaw = false;   // current Raw/Rendered toggle state
+let lastSuccess = null; // { id, deletetoken, url, isBurn, deleteState }
 
 // ── boot ─────────────────────────────────────────────────────────────────────
 const route = location.pathname.match(/^\/p\/([^/]+)\/?$/);
@@ -25,7 +35,7 @@ if (route) {
   // would leave every view hidden — a blank page). Show a proper error instead.
   try { id = decodeURIComponent(route[1]); } catch { /* fall through */ }
   if (id !== null) initView(id);
-  else status('This link is malformed — check that it was copied completely.', true);
+  else status('errMalformed', true);
 } else {
   initCreate();
 }
@@ -54,7 +64,7 @@ function initCreate() {
 
   const requestCreate = () => {
     if (createBtn.disabled) return;
-    if (!$('#editor').value.trim()) { showMsg(msg, 'Type something first.'); $('#editor').focus(); return; }
+    if (!$('#editor').value.trim()) { showMsg(msg, t('msgTypeSomething')); $('#editor').focus(); return; }
     msg.hidden = true;
     if (pwRequired) openPasswordModal((password) => submitPaste(password));
     else submitPaste('');
@@ -70,7 +80,6 @@ function initCreate() {
   // CLI/API) supports the full expiry range; the web client does not expose it.
   async function submitPaste(password) {
     createBtn.disabled = true;
-    const label = sendTxt ? sendTxt.textContent : '';
     // Press → the arrow leaves the button (`.sending`), then the composer follows
     // it out and the success view takes over, so the arrow leads the navigation.
     // Skipped under reduced motion: the CSS travel is off there, so the 32px jump
@@ -81,9 +90,9 @@ function initCreate() {
       createBtn.classList.add('sending');
       // The label waits for the arrow to clear — swapping it mid-flight resizes
       // the button and jogs the icon the eye is following.
-      relabel = setTimeout(() => { if (sendTxt) sendTxt.textContent = 'Encrypting…'; }, ARROW_LEAD_MS);
+      relabel = setTimeout(() => { if (sendTxt) sendTxt.textContent = t('msgEncrypting'); }, ARROW_LEAD_MS);
     } else if (sendTxt) {
-      sendTxt.textContent = 'Encrypting…';
+      sendTxt.textContent = t('msgEncrypting');
     }
     const arrowGone = animate ? wait(ARROW_LEAD_MS) : null;
     try {
@@ -110,7 +119,7 @@ function initCreate() {
       createBtn.classList.remove('sending'); // the arrow glides back in
       showMsg(msg, friendlyError(e));
       createBtn.disabled = false;
-      if (sendTxt) sendTxt.textContent = label;
+      if (sendTxt) sendTxt.textContent = t('createLink');
     }
   }
 }
@@ -173,18 +182,18 @@ function openPasswordModal(onSubmit) {
     }
   };
   const submit = () => {
-    if (!input.value) { showMsg(mmsg, 'Enter a password, or cancel.'); input.focus(); return; }
+    if (!input.value) { showMsg(mmsg, t('msgEnterPwOrCancel')); input.focus(); return; }
     // Practical cap, enforced VISIBLY — never via maxlength, whose silent
     // truncation could seal the note with a password the reader doesn't have.
     if (input.value.length > 128) {
-      showMsg(mmsg, 'Password is too long — 128 characters max.');
+      showMsg(mmsg, t('msgPwTooLong'));
       input.focus();
       return;
     }
     // A mistyped password permanently locks a one-time note (there is no safe
     // way to test it afterwards — opening the link consumes the note).
     if (input.value !== confirmInput.value) {
-      showMsg(mmsg, 'Passwords do not match — repeat the same password in both fields.');
+      showMsg(mmsg, t('msgPwMismatch'));
       confirmInput.focus();
       return;
     }
@@ -210,42 +219,52 @@ function openPasswordModal(onSubmit) {
 }
 
 function showSuccess({ id, deletetoken, url, isBurn }) {
+  lastSuccess = { id, deletetoken, url, isBurn, deleteState: 'idle' };
   showView('success');
   $('#paste-url').textContent = url;
-  if (isBurn) {
-    $('#success-note').textContent =
-      'Anyone with this link can read the note once.';
-  }
+  $('#success-note').textContent = t(isBurn ? 'successNoteBurn' : 'successNote');
   renderQr(url);
 
   $('#copy-url').onclick = async () => {
-    flashCopied($('#copy-url'), (await copyText(url)) ? 'copied' : 'failed');
+    flashCopied($('#copy-url'), (await copyText(url)) ? t('copiedFlash') : t('failedFlash'));
   };
+  $('#another').onclick = () => { location.href = '/'; };
+  armSuccessActions();
+}
+
+// (Re)arm the two irreversible confirmations from the stored success state —
+// also called on a language switch so the base and armed labels re-translate.
+// Re-arming resets any half-armed button, which is harmless: a stray arm times
+// out after 5 s anyway.
+function armSuccessActions() {
+  const { id, deletetoken, url } = lastSuccess;
   // Both irreversible actions are two-step: opening a one-time link consumes it,
   // and delete is permanent. A stray click must not kill a note about to be shared.
-  armConfirm($('#open-link'), 'Uses the one view — open?', () => { location.href = url; });
-  $('#another').onclick = () => { location.href = '/'; };
+  armConfirm($('#open-link'), t('confirmOpen'), () => { location.href = url; });
+  armConfirm($('#delete-btn'), t('confirmDelete'), () => doDelete(id, deletetoken));
+}
 
+async function doDelete(id, deletetoken) {
   const delBtn = $('#delete-btn');
   const sMsg = $('#success-msg');
-  const delLabel = delBtn.textContent;
-  armConfirm(delBtn, 'Permanently delete?', async () => {
-    delBtn.disabled = true;
-    delBtn.textContent = 'Deleting…';
-    try {
-      await deletePaste(id, deletetoken);
-      showMsg(sMsg, 'This paste has been deleted.');
-      toast('deleted');
-      delBtn.textContent = 'Deleted';
-      // The link is dead now — don't leave live-looking actions pointing at it.
-      $('#open-link').disabled = true;
-      $('#copy-url').disabled = true;
-    } catch (e) {
-      showMsg(sMsg, friendlyError(e));
-      delBtn.disabled = false;
-      delBtn.textContent = delLabel;
-    }
-  });
+  lastSuccess.deleteState = 'deleting';
+  delBtn.disabled = true;
+  delBtn.textContent = t('msgDeleting');
+  try {
+    await deletePaste(id, deletetoken);
+    showMsg(sMsg, t('msgPasteDeleted'));
+    toast(t('toastDeleted'));
+    lastSuccess.deleteState = 'deleted';
+    delBtn.textContent = t('msgDeleted');
+    // The link is dead now — don't leave live-looking actions pointing at it.
+    $('#open-link').disabled = true;
+    $('#copy-url').disabled = true;
+  } catch (e) {
+    showMsg(sMsg, friendlyError(e));
+    lastSuccess.deleteState = 'idle';
+    delBtn.disabled = false;
+    delBtn.textContent = t('deleteNow');
+  }
 }
 
 // Two-step confirmation for irreversible actions. The first activation "arms"
@@ -293,21 +312,21 @@ function initView(id) {
   if (newlink) newlink.hidden = false;
 
   const fragment = location.hash.slice(1);
-  if (!fragment) { status('This link is missing its decryption key.', true); return; }
+  if (!fragment) { status('errMissingKey', true); return; }
   if (id[0] === 'b') initBurnView(id, fragment);
   else initNormalView(id, fragment);
 }
 
 // Normal (KV) paste: reads are idempotent, so fetch and decrypt directly.
 async function initNormalView(id, fragment) {
-  status('decrypting…');
+  status('msgDecrypting');
   let paste;
   try { paste = await fetchPaste(id); } catch (e) { return handleReadError(e); }
   try {
     renderPaste(paste, await decryptPaste({ paste, fragment }));
   } catch (e) {
     if (e instanceof PasswordRequired) return promptPasswordNormal(paste, fragment);
-    status('Could not decrypt this note. The link may be corrupted or altered.', true);
+    status('errDecrypt', true);
   }
 }
 
@@ -315,7 +334,7 @@ async function initNormalView(id, fragment) {
 // consuming, so a password can be verified before the single destructive read.
 // The paste is only consumed once we actually reveal it.
 async function initBurnView(id, fragment) {
-  status('checking…');
+  status('msgChecking');
   let head;
   try { head = await fetchPasteMeta(id); } catch (e) { return handleReadError(e); }
   try {
@@ -324,7 +343,7 @@ async function initBurnView(id, fragment) {
     // clamped) or feed malformed fields into the crypto path.
     head = validateHead(head);
   } catch {
-    return status('Could not read this note — the server response was malformed.', true);
+    return status('errMalformedServer', true);
   }
 
   if (head.adata.kdf === 'pbkdf2-hkdf') {
@@ -332,7 +351,7 @@ async function initBurnView(id, fragment) {
     promptPasswordBurn(id, fragment, head);
   } else {
     // No password: an explicit "reveal" click is the consent to burn it.
-    status('This note can only be viewed once.', false, { reveal: true });
+    status('burnOnceOnly', false, { reveal: true });
     const revealBtn = $('#reveal-burn');
     revealBtn.disabled = false;
     // When the countdown hits zero the note is gone server-side — leaving an
@@ -340,7 +359,7 @@ async function initBurnView(id, fragment) {
     // expired state immediately (status() also stops and hides the timer).
     startExpiryTimer(head.meta, () => {
       revealBtn.disabled = true;
-      status('This note has expired — it can no longer be opened.', true);
+      status('expiredNote', true);
     });
     revealBtn.onclick = async () => {
       revealBtn.disabled = true;
@@ -351,7 +370,7 @@ async function initBurnView(id, fragment) {
       try {
         cek = await deriveContentKey({ adata: head.adata, wk: head.wk, fragment });
       } catch {
-        return status('Could not decrypt this note — the link may be incomplete or corrupted. The note was not opened and still exists.', true);
+        return status('errLinkIncomplete', true);
       }
       consumeBurn(id, head, cek);
     };
@@ -369,7 +388,7 @@ function bytesEqual(a, b) {
 // unwrapped content key from that verification — reused here so the password is
 // never stretched (PBKDF2) twice and the consumed read cannot "fail late".
 async function consumeBurn(id, head, cek) {
-  status('decrypting…');
+  status('msgDecrypting');
   let paste;
   try { paste = await consumePaste(id); } catch (e) { return handleReadError(e); }
   try {
@@ -386,7 +405,7 @@ async function consumeBurn(id, head, cek) {
     if (location.hash) history.replaceState(null, '', location.pathname + location.search);
     renderPaste(paste, result);
   } catch {
-    status('Could not decrypt this note. The link may be corrupted or altered.', true);
+    status('errDecrypt', true);
   }
 }
 
@@ -410,14 +429,11 @@ function promptPasswordBurn(id, fragment, head) {
 // Shared password screen. `verify(password)` throws on a bad/empty password
 // (paste untouched) and otherwise transitions the view itself.
 function wirePasswordScreen(isBurn, verify) {
+  pwScreen = { isBurn, decrypting: false };
   showView('password');
   wirePeek(['#decrypt-password', '#peek2']);
   const sub = $('#password-subtitle');
-  if (sub) {
-    sub.textContent = isBurn
-      ? 'This single-use note is password-protected. It is destroyed only once the correct password unlocks it.'
-      : 'This note is protected by a password in addition to the key in the link.';
-  }
+  if (sub) sub.textContent = t(isBurn ? 'pwSubBurn' : 'pwSubNormal');
   const input = $('#decrypt-password');
   const btn = $('#decrypt-btn');
   const msg = $('#password-msg');
@@ -436,20 +452,20 @@ function wirePasswordScreen(isBurn, verify) {
     btn.disabled = true;
     // Password key derivation (PBKDF2) takes real time — say so, like the
     // create button's "Encrypting…".
-    const label = btn.textContent;
-    btn.textContent = 'Decrypting…';
+    pwScreen.decrypting = true;
+    btn.textContent = t('msgDecrypting');
     try {
       await verify(input.value);
       input.value = ''; // verified — don't leave the password in the hidden DOM
+      pwScreen = null; // verify() replaced the view
     } catch (e) {
       // A GCM auth failure cannot distinguish a wrong password from a
       // corrupted/tampered link, so the message covers both honestly.
-      showMsg(msg, e instanceof PasswordRequired
-        ? 'Please enter a password.'
-        : 'Wrong password — try again. If you are sure it is correct, the link may be corrupted or altered.');
+      showMsg(msg, e instanceof PasswordRequired ? t('msgEnterPw') : t('msgWrongPw'));
       inFlight = false;
+      pwScreen.decrypting = false;
       btn.disabled = false;
-      btn.textContent = label;
+      btn.textContent = t('decrypt');
       input.focus();
     }
   };
@@ -462,45 +478,58 @@ function handleReadError(e) {
   // same as "gone" — telling a burn-note reader their note was consumed when
   // they are merely offline would be needlessly alarming.
   if (!(e instanceof ApiError)) {
-    status('Could not reach the server — check your connection and try again.', true);
+    status('errOffline', true);
   } else if (e.status === 410) {
-    status('This paste has expired or was already opened.', true);
+    status('errGone', true);
   } else {
-    status('This paste has expired, was already opened, or never existed.', true);
+    status('errGoneOrNever', true);
   }
 }
 
 function renderPaste(paste, result) {
+  lastPaste = { paste, result };
+  pasteRaw = false;
   showView('paste');
-
-  // Notes are uniform text now; source code is auto-detected and highlighted.
-  // `isCode` also covers older pastes explicitly saved with fmt:'code'.
-  const isMarkdown = result.fmt === 'markdown';
-  const isCode = result.fmt === 'code' || (result.fmt === 'plaintext' && looksLikeCode(result.text));
-
-  // Pills: (code|markdown) · (one-time view). Plain text gets no kind pill —
-  // it's the default and adds nothing. No expiry pill either: an opened note is
-  // already consumed, so "expires in 24h" would be misleading.
-  const pills = $('#paste-pills');
-  pills.textContent = '';
-  if (isMarkdown) pills.appendChild(pill('markdown'));
-  else if (isCode) pills.appendChild(pill('code'));
-  if (result.bar) pills.appendChild(pill('one-time view · now deleted', 'bad'));
+  paintPastePills(result);
 
   // Content (DOM construction only).
   const container = $('#paste-content');
-  let showRaw = false;
-  const draw = () => renderContent(container, result, isCode, showRaw);
+  const { isMarkdown, isCode } = pasteKinds(result);
+  const draw = () => renderContent(container, result, isCode, pasteRaw);
   draw();
 
   const rawBtn = $('#toggle-raw');
   rawBtn.hidden = !isMarkdown;
-  rawBtn.textContent = 'Raw';
-  rawBtn.onclick = () => { showRaw = !showRaw; rawBtn.textContent = showRaw ? 'Rendered' : 'Raw'; draw(); };
+  rawBtn.textContent = t('rawBtn');
+  rawBtn.onclick = () => {
+    pasteRaw = !pasteRaw;
+    rawBtn.textContent = pasteRaw ? t('renderedBtn') : t('rawBtn');
+    draw();
+  };
 
   $('#copy-content').onclick = async () => {
-    toast((await copyText(result.text)) ? 'copied to clipboard' : 'copy failed');
+    toast((await copyText(result.text)) ? t('toastCopied') : t('toastCopyFailed'));
   };
+}
+
+// Notes are uniform text now; source code is auto-detected and highlighted.
+// `isCode` also covers older pastes explicitly saved with fmt:'code'.
+function pasteKinds(result) {
+  const isMarkdown = result.fmt === 'markdown';
+  const isCode = result.fmt === 'code' || (result.fmt === 'plaintext' && looksLikeCode(result.text));
+  return { isMarkdown, isCode };
+}
+
+// Pills: (code|markdown) · (one-time view). Plain text gets no kind pill —
+// it's the default and adds nothing. No expiry pill either: an opened note is
+// already consumed, so "expires in 24h" would be misleading.
+function paintPastePills(result) {
+  const { isMarkdown, isCode } = pasteKinds(result);
+  const pills = $('#paste-pills');
+  pills.textContent = '';
+  if (isMarkdown) pills.appendChild(pill(t('pillMarkdown')));
+  else if (isCode) pills.appendChild(pill(t('pillCode')));
+  if (result.bar) pills.appendChild(pill(t('pillOnetime'), 'bad'));
 }
 
 function renderContent(container, result, isCode, showRaw) {
@@ -559,7 +588,7 @@ function wirePeek(...pairs) {
     for (const { input, btn } of fields) {
       input.type = show ? 'text' : 'password';
       btn.classList.toggle('revealed', show);
-      btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+      btn.setAttribute('aria-label', show ? t('hidePw') : t('showPw'));
       btn.setAttribute('aria-pressed', String(show));
     }
   };
@@ -576,13 +605,14 @@ function wirePeek(...pairs) {
 
 // `reveal` shows the burn "reveal once" action block; callers opt in explicitly
 // rather than the function sniffing the message text (which broke on rewording).
-function status(message, isError = false, { reveal = false } = {}) {
+function status(key, isError = false, { reveal = false } = {}) {
+  lastStatus = { key, isError, reveal };
   showView('status');
   // Any status transition supersedes a running countdown; the reveal branch
   // restarts it explicitly. Prevents a stale timer ticking under a later screen.
   stopExpiryTimer();
   const el = $('#status-msg');
-  el.textContent = message;
+  el.textContent = t(key);
   el.classList.toggle('error', isError);
   // Error states get a warning glyph + a "Create new paste" action, like the
   // reference expired screen. The burn "reveal once" prompt keeps its own action.
@@ -640,7 +670,7 @@ function startExpiryTimer(meta, onExpire) {
 // ms → H:MM:SS (or MM:SS under an hour). Clamps at 0 (shows "expired").
 function formatDuration(ms) {
   const total = Math.floor(ms / 1000);
-  if (total <= 0) return 'expired';
+  if (total <= 0) return t('expired');
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
@@ -655,10 +685,36 @@ function showMsg(el, message) {
 
 function friendlyError(e) {
   if (e instanceof ApiError) {
-    if (e.status === 429) return 'Too many pastes from your network — please wait a moment.';
-    if (e.status === 413) return 'That document is too large.';
-    return e.message || 'Server error. Please try again.';
+    if (e.status === 429) return t('err429');
+    if (e.status === 413) return t('err413');
+    return e.message || t('errServer');
   }
-  if (e && /too large/.test(e.message || '')) return 'That document is too large (1 MiB max).';
-  return 'Something went wrong. Please try again.';
+  if (e && /too large/.test(e.message || '')) return t('errTooLarge');
+  return t('errGeneric');
 }
+
+// ── language switch ──────────────────────────────────────────────────────────
+// i18n.js re-applies the static strings, then calls back here so the on-screen
+// view re-renders its dynamic labels. Transient messages (validation errors set
+// at action time) are deliberately left alone — the next interaction re-renders
+// them in the new language, and re-translating a half-finished action could
+// misstate its state.
+function retranslate() {
+  if (lastStatus && !$('#view-status').hidden) $('#status-msg').textContent = t(lastStatus.key);
+  if (pwScreen && !$('#view-password').hidden) {
+    const sub = $('#password-subtitle');
+    if (sub) sub.textContent = t(pwScreen.isBurn ? 'pwSubBurn' : 'pwSubNormal');
+    const btn = $('#decrypt-btn');
+    if (btn) btn.textContent = pwScreen.decrypting ? t('msgDecrypting') : t('decrypt');
+  }
+  if (lastPaste && !$('#view-paste').hidden) {
+    paintPastePills(lastPaste.result);
+    $('#toggle-raw').textContent = pasteRaw ? t('renderedBtn') : t('rawBtn');
+  }
+  if (lastSuccess && !$('#view-success').hidden) {
+    $('#success-note').textContent = t(lastSuccess.isBurn ? 'successNoteBurn' : 'successNote');
+    // Mid-delete and deleted states keep their in-flight labels.
+    if (lastSuccess.deleteState === 'idle') armSuccessActions();
+  }
+}
+onLangChange(retranslate);

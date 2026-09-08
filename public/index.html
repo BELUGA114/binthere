@@ -50,15 +50,15 @@
         <!-- Slim announcement bar. Hidden by default so returning/dismissed
        visitors never see a flash; announce.js reveals it only when the
        dismissal flag is absent (mirrors theme-init's localStorage pattern). -->
-        <aside class="announce" id="announce" aria-label="Announcement" hidden>
+        <aside class="announce" id="announce" aria-label="Announcement" data-i18n-al="announceLabel" hidden>
             <a
                 class="announce-link"
                 href="https://gaury.dev/blog/because-i-dont-trust-pastebins-either"
                 rel="noopener"
                 target="_blank"
             >
-                <span class="announce-tag">New</span>
-                <span class="announce-txt"
+                <span class="announce-tag" data-i18n="announceTag">New</span>
+                <span class="announce-txt" data-i18n="announceTxt"
                     >Why I don’t trust pastebins either</span
                 >
                 <span class="announce-arrow" aria-hidden="true">→</span>
@@ -68,6 +68,7 @@
                 class="announce-close"
                 id="announce-close"
                 aria-label="Dismiss announcement"
+                data-i18n-al="announceClose"
             >
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path
@@ -94,7 +95,7 @@
             </g>
         </svg>
         <header class="topbar reveal">
-            <a class="brand" href="/" id="brand" aria-label="binthere — home">
+            <a class="brand" href="/" id="brand" aria-label="binthere — home" data-i18n-al="brandHome">
                 <span class="wm-a">bin</span><span class="wm-b">there</span>
             </a>
             <div class="topbar-right">
@@ -107,6 +108,7 @@
                     rel="noopener"
                     target="_blank"
                     aria-label="binthere on GitHub"
+                    data-i18n-al="ghLabel"
                 >
                     <!-- Octicons "mark-github" (MIT). -->
                     <svg class="gh-mark" viewBox="0 0 16 16" aria-hidden="true">
@@ -128,13 +130,24 @@
                     </span>
                 </a>
                 <a class="back" id="newlink" href="/" hidden
-                    ><span class="arrow">＋</span><span>new paste</span></a
+                    ><span class="arrow">＋</span><span data-i18n="newPaste">new paste</span></a
                 >
+                <!-- Language toggle (i18n.js wires it): shows the language a
+                     click would switch to — 中 when English is active. -->
+                <button
+                    type="button"
+                    id="langToggle"
+                    class="lang-toggle"
+                    aria-label="Switch language"
+                >
+                    中
+                </button>
                 <button
                     type="button"
                     id="themeToggle"
                     class="theme-toggle"
                     aria-label="Toggle light/dark theme"
+                    data-i18n-al="themeToggle"
                     aria-pressed="true"
                 >
                     <svg
@@ -172,9 +185,9 @@
             <!-- ── CREATE ─────────────────────────────────────────────────────────── -->
             <section id="view-create" tabindex="-1" hidden>
                 <div class="head reveal d1">
-                    <p class="eyebrow">private by design</p>
-                    <h1 class="title">Say it once. <span class="title-em">Sealed.</span></h1>
-                    <p class="subtitle">
+                    <p class="eyebrow" data-i18n="eyebrowCreate">private by design</p>
+                    <h1 class="title"><span data-i18n="sayItOnce">Say it once.</span> <span class="title-em" data-i18n="sealed">Sealed.</span></h1>
+                    <p class="subtitle" data-i18n="createSubtitle">
                         Your note stays yours. Read once, then self-destructs.
                     </p>
                 </div>
@@ -184,7 +197,9 @@
                         id="editor"
                         class="editor"
                         placeholder="Write or paste your note… Only the recipient with the link can decrypt it."
+                        data-i18n-ph="editorPh"
                         aria-label="Note content"
+                        data-i18n-al="editorLabel"
                         spellcheck="false"
                     ></textarea>
 
@@ -196,6 +211,7 @@
                                 id="lock"
                                 aria-pressed="false"
                                 aria-label="Protect with a password"
+                                data-i18n-al="lockLabel"
                             >
                                 <svg
                                     class="lock-ico"
@@ -231,7 +247,7 @@
                                         fill="currentColor"
                                     />
                                 </svg>
-                                <span class="lock-txt">Password</span>
+                                <span class="lock-txt" data-i18n="password">Password</span>
                             </button>
                         </div>
                         <button
@@ -239,8 +255,9 @@
                             id="create"
                             class="send"
                             aria-label="Encrypt and create link"
+                            data-i18n-al="createLabel"
                         >
-                            <span class="send-txt">Create link</span>
+                            <span class="send-txt" data-i18n="createLink">Create link</span>
                             <svg
                                 class="send-ico"
                                 viewBox="0 0 24 24"
@@ -263,13 +280,14 @@
                     class="features reveal d3"
                     role="list"
                     aria-label="How binthere protects your note"
+                    data-i18n-al="featuresLabel"
                 >
-                    <span class="feat" role="listitem">Private</span>
-                    <span class="feat" role="listitem"
+                    <span class="feat" role="listitem" data-i18n="featPrivate">Private</span>
+                    <span class="feat" role="listitem" data-i18n="featE2e"
                         >End-to-end encrypted</span
                     >
-                    <span class="feat" role="listitem">One-time view</span>
-                    <span class="feat" role="listitem"
+                    <span class="feat" role="listitem" data-i18n="featOnetime">One-time view</span>
+                    <span class="feat" role="listitem" data-i18n="featAuto"
                         >Auto-deletes in 24 hours</span
                     >
                 </div>
@@ -287,10 +305,10 @@
                     tabindex="-1"
                     id="pw-modal-dialog"
                 >
-                    <h2 class="modal-title" id="pw-modal-title">
+                    <h2 class="modal-title" id="pw-modal-title" data-i18n="modalTitle">
                         Paste password
                     </h2>
-                    <p class="modal-sub">
+                    <p class="modal-sub" data-i18n="modalSub">
                         This password will be required to unlock this paste.
                     </p>
                     <div class="pw modal-pw">
@@ -299,18 +317,21 @@
                             id="modal-password"
                             class="input"
                             placeholder="Enter a password"
+                            data-i18n-ph="pwPh"
                             autocomplete="off"
                             data-bwignore
                             data-lpignore="true"
                             data-1p-ignore
                             data-form-type="other"
                             aria-label="Password"
+                            data-i18n-al="pwAria"
                         />
                         <button
                             type="button"
                             class="peek"
                             id="modal-peek"
                             aria-label="Show password"
+                            data-i18n-al="showPw"
                             aria-pressed="false"
                         >
                             <svg
@@ -354,18 +375,21 @@
                             id="modal-password-confirm"
                             class="input"
                             placeholder="Repeat the password"
+                            data-i18n-ph="pwConfirmPh"
                             autocomplete="off"
                             data-bwignore
                             data-lpignore="true"
                             data-1p-ignore
                             data-form-type="other"
                             aria-label="Repeat password"
+                            data-i18n-al="pwConfirmAria"
                         />
                         <button
                             type="button"
                             class="peek"
                             id="modal-peek-confirm"
                             aria-label="Show password"
+                            data-i18n-al="showPw"
                             aria-pressed="false"
                         >
                             <svg
@@ -407,11 +431,12 @@
                             type="button"
                             class="btn modal-btn"
                             id="pw-cancel"
+                            data-i18n="cancel"
                         >
                             Cancel
                         </button>
                         <button type="button" class="send" id="pw-create">
-                            <span class="send-txt">Create</span>
+                            <span class="send-txt" data-i18n="create">Create</span>
                             <svg
                                 class="send-ico"
                                 viewBox="0 0 24 24"
@@ -434,9 +459,9 @@
             <!-- ── SUCCESS ────────────────────────────────────────────────────────── -->
             <section id="view-success" tabindex="-1" hidden>
                 <div class="head reveal d1">
-                    <p class="eyebrow">sealed</p>
-                    <h1 class="title">Share your link</h1>
-                    <p class="subtitle" id="success-note">
+                    <p class="eyebrow" data-i18n="eyebrowSealed">sealed</p>
+                    <h1 class="title" data-i18n="shareLink">Share your link</h1>
+                    <p class="subtitle" id="success-note" data-i18n="successNote">
                         Send this to the one person who should read it — it
                         self-destructs the moment it's opened. The key that
                         unlocks it lives inside the link itself, so keep the
@@ -466,29 +491,30 @@
                                     <circle cx="32" cy="32" r="4.2" pathLength="1" />
                                 </g>
                             </svg>
-                            <span class="seal-label mono"
+                            <span class="seal-label mono" data-i18n="sealLabel"
                                 >scan to open · one-time read</span
                             >
                         </div>
                         <div class="card qr">
-                            <img id="qr" alt="QR code for the paste link" />
+                            <img id="qr" alt="QR code for the paste link" data-i18n-alt="qrAlt" />
                         </div>
                     </div>
                     <div class="linkrow">
                         <div class="url mono" id="paste-url"></div>
-                        <button type="button" class="copy-btn" id="copy-url">
+                        <button type="button" class="copy-btn" id="copy-url" data-i18n="copyLink">
                             copy link
                         </button>
                     </div>
                     <div class="btn-row">
-                        <button type="button" class="btn" id="open-link">
+                        <button type="button" class="btn" id="open-link" data-i18n="openLink">
                             Open link
                         </button>
-                        <a class="btn" href="/" id="another">Create another</a>
+                        <a class="btn" href="/" id="another" data-i18n="createAnother">Create another</a>
                         <button
                             type="button"
                             class="btn danger btn-end"
                             id="delete-btn"
+                            data-i18n="deleteNow"
                         >
                             Delete now
                         </button>
@@ -500,8 +526,8 @@
             <!-- ── PASSWORD PROMPT ────────────────────────────────────────────────── -->
             <section id="view-password" tabindex="-1" hidden>
                 <div class="head reveal d1">
-                    <p class="eyebrow">locked</p>
-                    <h1 class="title">Enter the password</h1>
+                    <p class="eyebrow" data-i18n="eyebrowLocked">locked</p>
+                    <h1 class="title" data-i18n="enterPw">Enter the password</h1>
                     <p class="subtitle" id="password-subtitle">
                         This note has a password. Ask whoever sent it to you,
                         then type it in to open the note.
@@ -514,18 +540,21 @@
                             id="decrypt-password"
                             class="input"
                             placeholder="Enter password"
+                            data-i18n-ph="decryptPh"
                             autocomplete="off"
                             data-bwignore
                             data-lpignore="true"
                             data-1p-ignore
                             data-form-type="other"
                             aria-label="Password"
+                            data-i18n-al="pwAria"
                         />
                         <button
                             type="button"
                             class="peek"
                             id="peek2"
                             aria-label="Show password"
+                            data-i18n-al="showPw"
                             aria-pressed="false"
                         >
                             <svg
@@ -561,7 +590,7 @@
                             </svg>
                         </button>
                     </div>
-                    <button type="button" class="cta" id="decrypt-btn">
+                    <button type="button" class="cta" id="decrypt-btn" data-i18n="decrypt">
                         Decrypt
                     </button>
                     <p class="msg error" id="password-msg" role="alert" hidden></p>
@@ -577,10 +606,11 @@
                         type="button"
                         class="btn btn-grow"
                         id="copy-content"
+                        data-i18n="copyText"
                     >
                         Copy text
                     </button>
-                    <button type="button" class="btn" id="toggle-raw">
+                    <button type="button" class="btn" id="toggle-raw" data-i18n="raw">
                         Raw
                     </button>
                 </div>
@@ -613,7 +643,7 @@
                     </svg>
                     <p class="msg" id="status-msg" role="status">loading…</p>
                     <div class="btn-row center" id="status-actions" hidden>
-                        <button type="button" class="cta" id="reveal-burn">
+                        <button type="button" class="cta" id="reveal-burn" data-i18n="revealNote">
                             Reveal note
                         </button>
                     </div>
@@ -624,7 +654,7 @@
                         aria-live="off"
                         hidden
                     >
-                        <span class="status-timer-label"
+                        <span class="status-timer-label" data-i18n="deletesIn"
                             >Deletes in</span
                         >
                         <span
@@ -634,7 +664,7 @@
                         >
                     </p>
                     <div class="btn-row center" id="status-new" hidden>
-                        <a class="cta cta-inline" href="/" id="status-new-link"
+                        <a class="cta cta-inline" href="/" id="status-new-link" data-i18n="createNew"
                             >Create new paste</a
                         >
                     </div>
@@ -642,8 +672,8 @@
             </section>
 
             <footer class="foot reveal d4">
-                <p class="foot-crypto mono" aria-label="Cryptography">
-                    AES-256-GCM · HKDF-SHA256 · Key stays in the URL
+                <p class="foot-crypto mono" aria-label="Cryptography" data-i18n-al="cryptoAria">
+                    AES-256-GCM · HKDF-SHA256 · <span data-i18n="footKey">Key stays in the URL</span>
                     <span class="foot-frag">#fragment</span>
                 </p>
                 <p class="foot-links" id="foot-links">
@@ -651,18 +681,20 @@
                         href="https://github.com/nxfu/binthere"
                         rel="noopener"
                         target="_blank"
+                        data-i18n="footerSource"
                         >Source</a
                     >
                     <a
                         href="https://github.com/nxfu/binthere/blob/main/SECURITY.md"
                         rel="noopener"
                         target="_blank"
+                        data-i18n="footerThreat"
                         >Threat Model</a
                     >
-                    <a href="/.well-known/security.txt" rel="noopener"
+                    <a href="/.well-known/security.txt" rel="noopener" data-i18n="footerSecurity"
                         >Security</a
                     >
-                    <a href="https://gaury.dev" rel="noopener"
+                    <a href="https://gaury.dev" rel="noopener" data-i18n="footerDeveloper"
                         >Developer</a
                     >
                 </p>
