@@ -24,8 +24,8 @@ run_worker_first = [ "/api/*" ]
 # then paste the id below (and a preview_id for local dev).
 [[kv_namespaces]]
 binding = "PASTES"
-id = "fd20757b64cf4491a67a96b36263613e"
-preview_id = "3cea39cba48443d2babc78f1af07f39f"
+id = "98ce2a2d004845a19613b299251ee54e"
+preview_id = "d2d340955bdd41c8b362717d6e2208f0"
 
 # ── Durable Object: burn-after-read pastes (atomic single-consumer) ──────────
 [[durable_objects.bindings]]
