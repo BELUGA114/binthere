@@ -166,8 +166,8 @@ export const STRINGS = {
 
     // create view
     eyebrowCreate: '隐私始于设计',
-    sayItOnce: '只说一次。',
-    sealed: '封缄。',
+    sayItOnce: '只说一次.',
+    sealed: '封缄.',
     createSubtitle: '便签始终属于你。读一次，随后自行销毁。',
     editorPh: '写下或粘贴你的便签……只有持有链接的收件人才能解密。',
     editorLabel: '便签内容',
