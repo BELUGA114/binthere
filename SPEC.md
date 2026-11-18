@@ -206,6 +206,10 @@ Parsing is strict. The validator:
    version/alg, out-of-range iteration count, or pollution-shaped key ⇒ **HTTP 400**, no
    storage, no partial state.
 
+Creation policy additionally requires `adata.bar === true` and `meta.expire === "1day"`.
+Other lifecycle values are rejected with HTTP 400. Format v1, canonical AAD and the frozen
+vectors are unchanged: legacy records with other lifecycles remain readable and deletable.
+
 ---
 
 ## 6. Limits
@@ -288,6 +292,9 @@ trigger it — and never releases content (`DELETE` returns no paste body).
 
 `meta.expire` maps to a TTL in seconds:
 
+New creations use only `1day` (86400 seconds) in the burn Durable Object. The full mapping
+below remains supported when interpreting existing records and their metadata.
+
 | key     | seconds   |   | key      | seconds    |
 |---------|-----------|---|----------|------------|
 | `5min`  | 300       |   | `1month` | 2592000    |
@@ -311,10 +318,11 @@ trigger it — and never releases content (`DELETE` returns no paste body).
 | `POST /api/paste/:id/consume` | `X-Burn-Intent: consume` header (burn ids only) | `200` + paste | `400` missing header · `403` cross-site · `404` malformed/non-burn id · `410` burned/expired |
 | `DELETE /api/paste/:id`  | `X-Delete-Token: <deleteToken>` header | `200`    | `400` missing token · `403` wrong token · `404` missing |
 
-The site also serves `GET /api/stars`, which answers `{ "stars": <integer> }` from a cached
-proxy of the repository's public GitHub star count (`502` when GitHub is unavailable). It exists
-for the topbar badge, touches no paste state, and is **not part of this protocol** — a
-conforming client never calls it.
+The site also serves `GET /api/stars`, which answers `{ "stars": <integer> }` from the last
+successful daily GitHub snapshot in KV (`503` before initialization or when KV is unavailable).
+`GET /api/statistics` serves a best-effort anonymous aggregate of successful creations since
+deployment; see [`docs/anonymous-paste-statistics.md`](./docs/anonymous-paste-statistics.md).
+Both endpoints are **outside this protocol** — a conforming paste client never calls them.
 
 `POST /api/paste` requires `Content-Type: application/json` (parameters such as `charset`
 are allowed); anything else is a `415`. This forces a CORS preflight for cross-origin browser

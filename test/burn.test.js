@@ -2,7 +2,9 @@
 // the real workerd runtime (KV + Durable Object) via vitest-pool-workers.
 import { env, SELF, runDurableObjectAlarm } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
-import { encryptPaste, decryptPaste, deriveContentKey, PasswordRequired, DecryptError } from '../public/js/crypto.js';
+import { encryptPaste, decryptPaste, deriveContentKey, deriveKEK, aesGcmEncrypt, PasswordRequired, DecryptError } from '../public/js/crypto.js';
+import { buildAAD } from '../public/js/format.js';
+import { randomBytes, b64urlFromBytes, utf8 } from '../public/js/bytes.js';
 import { genDeleteToken, hashToken } from '../src/lib/ids.js';
 
 const ORIGIN = 'https://binthere.test';
@@ -15,27 +17,48 @@ const consume = (id, headers = { 'x-burn-intent': 'consume' }) =>
 const deletePaste = (id, token) =>
   SELF.fetch(`${ORIGIN}/api/paste/${id}`, { method: 'DELETE', headers: { 'x-delete-token': token } });
 
-describe('paste lifecycle (KV)', () => {
-  it('creates, reads, decrypts, and deletes a normal paste', async () => {
-    const text = 'a normal paste';
-    const { body, fragment } = await encryptPaste({ text });
-
-    const created = await postPaste(body);
-    expect(created.status).toBe(201);
-    const { id, deletetoken } = await created.json();
-    expect(id[0]).toBe('k'); // KV class
-
-    const read = await getPaste(id);
-    expect(read.status).toBe(200);
-    const paste = await read.json();
-    expect((await decryptPaste({ paste, fragment })).text).toBe(text);
-
-    const del = await deletePaste(id, deletetoken);
-    expect(del.status).toBe(200);
+describe('supported paste lifecycle', () => {
+  it('still reads, decrypts and deletes an existing reusable KV paste', async () => {
+    const secret = randomBytes(32);
+    const cek = randomBytes(32);
+    const ivc = randomBytes(12);
+    const ivw = randomBytes(12);
+    const adata = {
+      alg: 'A256GCM', kdf: 'hkdf', iter: 0, comp: 'none', fmt: 'plaintext', bar: false,
+      ivc: b64urlFromBytes(ivc), ivw: b64urlFromBytes(ivw), skdf: '',
+    };
+    const aad = buildAAD(adata);
+    const kek = await deriveKEK(secret, { usePassword: false });
+    const key = await crypto.subtle.importKey('raw', cek, 'AES-GCM', false, ['encrypt']);
+    const paste = {
+      v: 1, adata, meta: { expire: 'never', created: Math.floor(Date.now() / 1000) },
+      wk: b64urlFromBytes(await aesGcmEncrypt(kek, ivw, cek, aad)),
+      ct: b64urlFromBytes(await aesGcmEncrypt(key, ivc, utf8('legacy note'), aad)),
+    };
+    const id = `k${b64urlFromBytes(randomBytes(16))}`;
+    const token = genDeleteToken();
+    await env.PASTES.put(id, JSON.stringify({ p: paste, dth: await hashToken(token) }));
+    for (let read = 0; read < 2; read++) {
+      const response = await getPaste(id);
+      expect(response.status).toBe(200);
+      expect(await decryptPaste({ paste: await response.json(), fragment: b64urlFromBytes(secret) }))
+        .toEqual({ text: 'legacy note', fmt: 'plaintext', bar: false });
+    }
+    expect((await deletePaste(id, token)).status).toBe(200);
     expect((await getPaste(id)).status).toBe(404);
   });
 
-  it('rejects deletion with the wrong token (403) and keeps the paste', async () => {
+  it('rejects creation of reusable or custom-expiry pastes', async () => {
+    const { body } = await encryptPaste({ text: 'legacy settings' });
+    body.adata.bar = false;
+    expect((await postPaste(body)).status).toBe(400);
+
+    const { body: expiring } = await encryptPaste({ text: 'legacy expiry' });
+    expiring.meta.expire = '1week';
+    expect((await postPaste(expiring)).status).toBe(400);
+  });
+
+  it('rejects deletion with the wrong token (403) and keeps the note', async () => {
     const { body } = await encryptPaste({ text: 'keep me' });
     const { id } = await (await postPaste(body)).json();
     expect((await deletePaste(id, genDeleteToken())).status).toBe(403);
@@ -99,11 +122,10 @@ describe('burn-after-read (Durable Object)', () => {
     expect((await consume(id, { 'x-burn-intent': 'consume', 'sec-fetch-site': 'same-origin' })).status).toBe(200);
   });
 
-  it('consume on a non-burn (KV) id is 404; GET on /consume is 405 + Allow: POST', async () => {
-    const { body } = await encryptPaste({ text: 'kv paste' });
-    const { id } = await (await postPaste(body)).json();
+  it('consume on a legacy KV id is 404; GET on /consume is 405 + Allow: POST', async () => {
+    const id = 'k' + 'A'.repeat(22);
     expect((await consume(id)).status).toBe(404);
-    expect((await getPaste(id)).status).toBe(200); // untouched
+    expect((await getPaste(id)).status).toBe(404);
 
     const get = await SELF.fetch(`${ORIGIN}/api/paste/${id}/consume`);
     expect(get.status).toBe(405);
@@ -144,20 +166,6 @@ describe('burn peek — verify password before the single read', () => {
     expect((await getMeta(id)).status).toBe(200); // peeking again still works
     expect((await consume(id)).status).toBe(200); // the explicit consume destroys
     expect((await getMeta(id)).status).toBe(410);  // now gone
-  });
-
-  it('KV ?meta=1 returns the head without ciphertext (every storage class)', async () => {
-    const { body } = await encryptPaste({ text: 'kv head' });
-    const { id } = await (await postPaste(body)).json();
-
-    const head = await (await getMeta(id)).json();
-    expect(head.ct).toBeUndefined();
-    expect(head.wk).toBeTruthy();
-    expect(head.adata.kdf).toBe('hkdf');
-    expect(head.meta.expire).toBeTruthy();
-
-    const full = await (await getPaste(id)).json(); // plain GET still has ct
-    expect(full.ct).toBeTruthy();
   });
 
   it('REGRESSION: a wrong/absent password on a burn paste does NOT consume it', async () => {
@@ -287,14 +295,10 @@ describe('request validation & limits', () => {
     expect((await postPaste(body)).status).toBe(413);
   });
 
-  it('rejects a burn paste whose record exceeds the DO storage cap with 413', async () => {
+  it('rejects a paste whose record exceeds the DO storage cap with 413', async () => {
     const { body } = await encryptPaste({ text: 'x', bar: true });
     body.ct = 'A'.repeat(2500000); // valid per-format, but over MAX_BURN_RECORD
     expect((await postPaste(body)).status).toBe(413);
-    // The same ct in a normal (KV) paste is fine — the cap is burn-only.
-    const { body: kvBody } = await encryptPaste({ text: 'x' });
-    kvBody.ct = 'A'.repeat(2500000);
-    expect((await postPaste(kvBody)).status).toBe(201);
   });
 
   it('returns 404 for unknown or malformed ids', async () => {

@@ -84,8 +84,9 @@ key/plaintext compromise. binthere treats XSS as a top-severity class and defend
   document and every asset the browser executes; the JSON `/api/*` responses (which the
   browser never renders as a document) instead carry `cache-control: no-store` and
   `x-content-type-options: nosniff` (`src/index.js`).
-- **No third-party JavaScript, no CDN scripts, no analytics.** All scripts, styles, and fonts
-  are first-party and self-hosted.
+- **No third-party JavaScript, no CDN scripts, no user tracking.** All scripts, styles, and fonts
+  are first-party and self-hosted. The anonymous creation counter stores aggregate integers only,
+  without paste or visitor identifiers; see [`docs/anonymous-paste-statistics.md`](./docs/anonymous-paste-statistics.md).
 - **Decrypted content is rendered by DOM construction only** (`document.createElement` +
   `textContent`). Decrypted user content is **never** assigned to `innerHTML`.
 - **Markdown supports a safe subset with no raw HTML.** Link `href`s are restricted to an

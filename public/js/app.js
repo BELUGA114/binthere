@@ -7,7 +7,7 @@ import { encryptPaste, decryptPaste, decryptContent, deriveContentKey, PasswordR
 import { createPaste, fetchPaste, fetchPasteMeta, consumePaste, deletePaste, ApiError } from './api.js';
 import { validateHead, validatePaste, buildAAD, EXPIRE_SECONDS } from './format.js';
 import { renderMarkdown } from './markdown.js';
-import { looksLikeCode, highlightInto } from './highlight.js';
+import { detectLanguage, looksLikeCode, highlightInto } from './highlight.js';
 import { $, showView, toast, copyText, flashCopied, pill } from './ui.js';
 import { t, onLangChange } from './i18n.js';
 
@@ -21,7 +21,7 @@ let expiryTimer = null;
 // State for re-translating the on-screen view when the language is switched
 // (i18n.js re-applies the static strings, then calls back here). Each view
 // records just enough to re-derive its dynamic labels; see retranslate().
-let lastStatus = null;  // { key, isError, reveal } — the status screen's message
+let lastStatus = null;  // { key, isError, reveal, httpStatus } — the status screen's message
 let pwScreen = null;    // { isBurn, decrypting } — the password prompt's labels
 let lastPaste = null;   // { paste, result } — the rendered paste's pills/buttons
 let pasteRaw = false;   // current Raw/Rendered toggle state
@@ -75,9 +75,8 @@ function initCreate() {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); requestCreate(); }
   });
 
-  // Every note is one-time view (bar:true) and auto-deletes within 24h — a
-  // deliberate product choice, not a missing picker. The wire format (and the
-  // CLI/API) supports the full expiry range; the web client does not expose it.
+  // Every note is one-time view and auto-deletes within 24h. The API enforces
+  // this lifecycle for all new pastes; old links remain readable.
   async function submitPaste(password) {
     createBtn.disabled = true;
     // Press → the arrow leaves the button (`.sending`), then the composer follows
@@ -100,8 +99,6 @@ function initCreate() {
         text: $('#editor').value,
         password,
         fmt,
-        bar: true,
-        expire: '1day',
       });
       const { id, deletetoken } = await createPaste(body);
       const url = `${location.origin}/p/${id}#${fragment}`;
@@ -390,7 +387,7 @@ function bytesEqual(a, b) {
 async function consumeBurn(id, head, cek) {
   status('msgDecrypting');
   let paste;
-  try { paste = await consumePaste(id); } catch (e) { return handleReadError(e); }
+  try { paste = await consumePaste(id); } catch (e) { return handleConsumeError(e); }
   try {
     paste = validatePaste(paste);
     // Defense in depth: the consumed record must match the authenticated head we
@@ -474,15 +471,36 @@ function wirePasswordScreen(isBurn, verify) {
 }
 
 function handleReadError(e) {
-  // A fetch that never reached the server (offline, DNS, blocked) is NOT the
-  // same as "gone" — telling a burn-note reader their note was consumed when
-  // they are merely offline would be needlessly alarming.
   if (!(e instanceof ApiError)) {
     status('errOffline', true);
+  } else if (e.status === 404) {
+    status('errNotFound', true);
   } else if (e.status === 410) {
     status('errGone', true);
+  } else if (e.status === 429) {
+    status('errRead429', true);
+  } else if (e.status >= 500) {
+    status('errReadServer', true);
   } else {
-    status('errGoneOrNever', true);
+    status('errReadRejected', true, { httpStatus: e.status });
+  }
+}
+
+function handleConsumeError(e) {
+  if (e instanceof ApiError && e.consumeState === 'not-sent') {
+    status('errConsumeNotSent', true);
+  } else if (e instanceof ApiError && e.status === 404) {
+    status('errNotFound', true);
+  } else if (e instanceof ApiError && e.status === 410) {
+    status('errGone', true);
+  } else if (e instanceof ApiError && e.status === 429) {
+    status('errConsume429', true);
+  } else if (e instanceof ApiError && e.responseStatus >= 500) {
+    status('errConsumeServer', true, { httpStatus: e.responseStatus });
+  } else if (!(e instanceof ApiError) || e.consumeState === 'unknown' || e.status === 0 || e.status >= 500) {
+    status('errConsumeUnknown', true);
+  } else {
+    status('errConsumeRejected', true, { httpStatus: e.status });
   }
 }
 
@@ -494,30 +512,40 @@ function renderPaste(paste, result) {
 
   // Content (DOM construction only).
   const container = $('#paste-content');
-  const { isMarkdown, isCode } = pasteKinds(result);
-  const draw = () => renderContent(container, result, isCode, pasteRaw);
+  const { language, isMarkdown, isCode } = pasteKinds(result);
+  const draw = () => renderContent(container, result, isMarkdown, isCode, pasteRaw);
   draw();
 
   const rawBtn = $('#toggle-raw');
-  rawBtn.hidden = !isMarkdown;
+  rawBtn.hidden = !(isMarkdown || isCode);
   rawBtn.textContent = t('rawBtn');
+  rawBtn.setAttribute('aria-pressed', 'false');
   rawBtn.onclick = () => {
     pasteRaw = !pasteRaw;
     rawBtn.textContent = pasteRaw ? t('renderedBtn') : t('rawBtn');
+    rawBtn.setAttribute('aria-pressed', String(pasteRaw));
     draw();
   };
 
   $('#copy-content').onclick = async () => {
-    toast((await copyText(result.text)) ? t('toastCopied') : t('toastCopyFailed'));
+    try {
+      toast((await copyText(result.text)) ? t('toastCopied') : t('toastCopyFailed'));
+    } catch {
+      toast(t('toastCopyFailed'));
+    }
   };
+
+  $('#download-content').onclick = () => downloadPaste(result.text, isMarkdown ? 'md' : isCode ? language : 'txt');
 }
 
 // Notes are uniform text now; source code is auto-detected and highlighted.
 // `isCode` also covers older pastes explicitly saved with fmt:'code'.
 function pasteKinds(result) {
-  const isMarkdown = result.fmt === 'markdown';
-  const isCode = result.fmt === 'code' || (result.fmt === 'plaintext' && looksLikeCode(result.text));
-  return { isMarkdown, isCode };
+  const language = detectLanguage(result.text);
+  const isMarkdown = result.fmt === 'markdown' || (result.fmt === 'plaintext' && language === 'markdown');
+  const isCode = result.fmt === 'code' || (result.fmt === 'plaintext' && language !== 'text' && language !== 'markdown')
+    || (result.fmt === 'plaintext' && looksLikeCode(result.text));
+  return { language, isMarkdown, isCode };
 }
 
 // Pills: (code|markdown) · (one-time view). Plain text gets no kind pill —
@@ -532,9 +560,9 @@ function paintPastePills(result) {
   if (result.bar) pills.appendChild(pill(t('pillOnetime'), 'bad'));
 }
 
-function renderContent(container, result, isCode, showRaw) {
+function renderContent(container, result, isMarkdown, isCode, showRaw) {
   container.textContent = '';
-  if (result.fmt === 'markdown' && !showRaw) {
+  if (isMarkdown && !showRaw) {
     const div = document.createElement('div');
     div.className = 'md';
     renderMarkdown(div, result.text);
@@ -543,7 +571,7 @@ function renderContent(container, result, isCode, showRaw) {
   }
   const pre = document.createElement('pre');
   pre.className = 'code';
-  if (isCode) {
+  if (isCode && !showRaw) {
     // Highlight via createElement + textContent only (never innerHTML).
     const code = document.createElement('code');
     highlightInto(code, result.text);
@@ -552,6 +580,26 @@ function renderContent(container, result, isCode, showRaw) {
     pre.textContent = result.text;
   }
   container.appendChild(pre);
+}
+
+function downloadPaste(text, extension) {
+  let url;
+  try {
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `binthere-paste.${/^(?:js|py|md|json|html|css|ts|txt)$/.test(extension) ? extension : 'txt'}`;
+    link.hidden = true;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    toast(t('toastDownloadStarted'));
+  } catch {
+    toast(t('toastDownloadFailed'));
+  } finally {
+    if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 }
 
 // ── shared helpers ───────────────────────────────────────────────────────────
@@ -605,14 +653,14 @@ function wirePeek(...pairs) {
 
 // `reveal` shows the burn "reveal once" action block; callers opt in explicitly
 // rather than the function sniffing the message text (which broke on rewording).
-function status(key, isError = false, { reveal = false } = {}) {
-  lastStatus = { key, isError, reveal };
+function status(key, isError = false, { reveal = false, httpStatus = null } = {}) {
+  lastStatus = { key, isError, reveal, httpStatus };
   showView('status');
   // Any status transition supersedes a running countdown; the reveal branch
   // restarts it explicitly. Prevents a stale timer ticking under a later screen.
   stopExpiryTimer();
   const el = $('#status-msg');
-  el.textContent = t(key);
+  el.textContent = t(key).replace('{status}', String(httpStatus));
   el.classList.toggle('error', isError);
   // Error states get a warning glyph + a "Create new paste" action, like the
   // reference expired screen. The burn "reveal once" prompt keeps its own action.
@@ -700,7 +748,9 @@ function friendlyError(e) {
 // them in the new language, and re-translating a half-finished action could
 // misstate its state.
 function retranslate() {
-  if (lastStatus && !$('#view-status').hidden) $('#status-msg').textContent = t(lastStatus.key);
+  if (lastStatus && !$('#view-status').hidden) {
+    $('#status-msg').textContent = t(lastStatus.key).replace('{status}', String(lastStatus.httpStatus));
+  }
   if (pwScreen && !$('#view-password').hidden) {
     const sub = $('#password-subtitle');
     if (sub) sub.textContent = t(pwScreen.isBurn ? 'pwSubBurn' : 'pwSubNormal');

@@ -39,8 +39,8 @@ test suite, with the ~700 KB of jQuery/Bootstrap/zlib-WASM stripped out. It runs
 Cloudflare Worker (Static Assets + KV + a Durable Object), so hosting is cheap and there is no
 server to maintain.
 
-- **No accounts, no tracking.** Paste, share, done. There is nothing to sign up for and no
-  analytics watching you do it.
+- **No accounts or user tracking.** binthere keeps only an anonymous aggregate count of
+  successfully created pastes. It stores no visitor or paste identifiers for this count.
 - **Nobody can recover a lost link.** Not even the operator — there is no key to look up and
   no index of pastes. The link is the only copy of the key, by design.
 - **Honest limits.** The server still sees IPs, timings, and ciphertext sizes (it's private,
@@ -90,12 +90,13 @@ even under simultaneous clicks — a Durable Object guarantees it), and everyone
 | Burn-after-read | Every note is a strict, atomic single-consumer read (Durable Object). The first reader gets it; everyone else gets `410 Gone`. |
 | Auto-expiry | Notes delete themselves after 24 hours. |
 | Safe rendering | Auto-detected syntax highlighting and a safe Markdown subset (no raw HTML, sanitized links). All rendering is DOM-construction only — never `innerHTML`. |
-| Sharing tools | Copy link, QR code, delete link. |
-| Minimal surface | Strict CSP, self-hosted fonts, no third-party scripts, no analytics, no accounts. |
+| Sharing tools | Copy link, QR code, delete link, download decrypted text. |
+| Minimal surface | Strict CSP, self-hosted fonts, no third-party scripts, no user tracking, no accounts. |
 
 > [!NOTE]
-> The wire format supports the full expiry range (5 minutes–1 year or never) and non-burn
-> pastes; the current UI simply fixes 24 h + one-time view, so older links keep working.
+> New pastes must expire after 24 hours and allow only one read; the API enforces this for
+> every client. The wire format still accepts legacy expiry values and non-burn records for
+> reading and deleting older links.
 
 ## How it compares
 
@@ -190,11 +191,11 @@ npm run deploy           # creates the Worker, Durable Object, and rate limiter
   [`tools/opengraph.html`](./tools/opengraph.html) and re-render with `node tools/render-og.mjs`
   (needs a local Chrome/Chromium; pass `--browser <path>` or set `$CHROME` if it isn't found).
 - `npm run dev` works with placeholder KV ids — KV is emulated locally.
-- **Cost note on `never` expiry:** the official clients always create 24-hour one-time
-  notes, but the wire format (and the API) accepts `expire: "never"`. Such a paste is
-  stored with no KV TTL and no Durable Object alarm — an unread burn note kept forever
-  carries a small perpetual cost under SQLite-backed DO storage billing. If you expose
-  `never` to third-party clients, decide whether to cap it or accept the standing cost.
+- Configure `GITHUB_REPOSITORY` in `wrangler.toml` for the daily Star snapshot. The checked-in
+  value matches the topbar link to `nxfu/binthere`. A new deployment serves no count until
+  its first successful scheduled refresh at 00:00 UTC (08:00 in China).
+- **Legacy `never` expiry:** existing records with no TTL or Durable Object alarm remain
+  supported and may carry a standing storage cost. New creations always expire in 24 hours.
 
 </details>
 
@@ -204,8 +205,8 @@ npm run deploy           # creates the Worker, Durable Object, and rate limiter
 | --- | --- |
 | Static Assets (`public/`) | SPA frontend, served directly by the Worker |
 | Worker (`src/index.js`) | `/api/*` paste API — stores ciphertext, enforces size/rate/burn |
-| KV (`PASTES`) | Normal pastes, with native TTL expiry |
-| Durable Object (`BurnPaste`) | Burn-after-read pastes, atomic single-consumer |
+| KV (`PASTES`) | Legacy normal pastes and the daily Star snapshot |
+| Durable Object (`BurnPaste`) | New one-time pastes and separately named anonymous counter shards |
 | Rate Limiting binding | Abuse mitigation on paste creation (fail-open) |
 
 See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the request path and [`SPEC.md`](./SPEC.md) for
@@ -220,10 +221,12 @@ the key fragment never appears in any request. Full details in [`SPEC.md`](./SPE
 | Method & path | Purpose | Success | Errors |
 | --- | --- | --- | --- |
 | `POST /api/paste` | Create a paste (format v1 JSON) | `201` | `400` invalid · `413` too large · `429` rate-limited |
-| `GET /api/paste/:id` | Fetch a paste (consumes a burn) | `200` | `404` missing/expired · `410` burned |
+| `GET /api/paste/:id` | Fetch a legacy KV paste or peek a burn head (never consumes) | `200` | `404` missing/expired · `410` burned |
 | `GET /api/paste/:id?meta=1` | Peek a burn head without consuming | `200` | `404` missing · `410` burned/expired |
+| `POST /api/paste/:id/consume` | Read once, with `X-Burn-Intent: consume` | `200` | `400` missing intent · `403` cross-site · `404` invalid id · `410` burned/expired |
 | `DELETE /api/paste/:id` | Delete, with `X-Delete-Token` header | `200` | `400` missing token · `403` wrong token · `404` missing |
-| `GET /api/stars` | Repo star count for the topbar badge (not part of the paste protocol) | `200` | `502` GitHub unavailable |
+| `GET /api/stars` | Daily repo Star snapshot (outside the paste protocol) | `200` | `503` snapshot unavailable |
+| `GET /api/statistics` | Anonymous aggregate creation count (outside the paste protocol) | `200` | `503` counter unavailable |
 
 The delete token travels in a header — never in the URL — so it cannot land in request logs;
 the server stores and compares only its SHA-256.
@@ -278,9 +281,9 @@ Most of these are deliberate scope choices, not bugs. Know them before relying o
   ([`SPEC.md`](./SPEC.md) §8 documents the trade-off).
 - **Password KDF is PBKDF2-SHA256** (310k iterations), not a memory-hard KDF. Argon2id is on
   the roadmap.
-- **The UI fixes expiry at 24 h and one-time view.** The wire format supports more; the
-  controls are just hidden.
-- **English only.**
+- **New pastes always expire at 24 h and permit one read.** This policy is enforced by the API;
+  other lifecycle values are accepted only for existing records.
+- **English and Simplified Chinese UI.** Browser-language detection and a manual toggle are supported.
 - **The rate limiter fails open** — it is abuse mitigation, not access control.
 - **Canonical URLs are hardcoded** to the origin deployment; update them when self-hosting
   (see [Self-hosting](#self-hosting)).

@@ -15,20 +15,21 @@ one `wrangler.toml`) keeps the security-sensitive integration surface small.
   GET /fonts/…           │        │                       • exact file, else SPA fallback index.html │
                          │        │                                                                  │
   POST   /api/paste      │        └─ path /api/*     ─▶  src/index.js router                          │
-  GET    /api/paste/:id  │                                 ├─ POST  create  ─▶ KV or BurnPaste DO     │
+  GET    /api/paste/:id  │                                 ├─ POST  create  ─▶ BurnPaste DO           │
   DELETE /api/paste/:id  │                                 ├─ GET   read    ─▶ KV or BurnPaste DO     │
                          │                                 ├─ DELETE delete ─▶ KV or BurnPaste DO     │
-  GET    /api/stars      │                                 └─ GET   stars   ─▶ api.github.com (cached)│
+  GET    /api/stars      │                                 └─ GET   stars   ─▶ KV daily snapshot      │
                          └──────────────────────────────────────────────────────────────────────────┘
 ```
 
 - `_headers` (in `public/`) applies the strict CSP + security headers to every asset response.
 - `not_found_handling = "single-page-application"` makes `/p/<id>` serve `index.html`; the
   client reads the id from the path and the key from the `#fragment`.
-- `GET /api/stars` is the one route outside the paste path: it proxies the repository's public
-  star count for the topbar badge, since the page cannot reach `api.github.com` itself under
-  `connect-src 'self'`. The answer is the same for every visitor, says nothing about them, and
-  is cached at the edge and in the browser (30 min) so page loads don't become GitHub requests.
+- `GET /api/stars` reads the last successful KV snapshot (30 min response cache). Only the
+  daily scheduled handler calls GitHub; failed refreshes preserve the previous count.
+- `GET /api/statistics` sums sixteen statistics-only `BurnPaste` instances. After successful
+  storage, creation schedules a best-effort increment with `waitUntil`, passing no paste or
+  visitor data. The counter starts at zero and requires no new Durable Object migration.
 
 ## Zero-knowledge boundary
 
@@ -42,7 +43,7 @@ expiry option, and — server-side only — a `SHA-256` of the delete token. See
 Paste ids carry a 1-char class prefix so the read path picks the backend with **no extra
 lookup**, and the client knows a burn paste is single-use *before* fetching it:
 
-- `k…` → **KV** (`PASTES`). Immutable value `{ p: paste, dth }`, native `expirationTtl`.
+- Legacy `k…` → **KV** (`PASTES`). Immutable value `{ p: paste, dth }`, native `expirationTtl`.
   Reads are idempotent; eventual consistency is fine because the value never changes.
 - `b…` → **`BurnPaste` Durable Object**, addressed `idFromName(id)`. The value lives in DO
   storage. Every mutation runs inside `blockConcurrencyWhile`, so read-and-delete is atomic:
@@ -52,12 +53,13 @@ lookup**, and the client knows a burn paste is single-use *before* fetching it:
   destructive read (`SPEC.md` §8). Expiry is a DO `alarm` plus a lazy check on read.
 
 ```
-create ─┬─ bar=false ─▶ id="k…" ─▶ PASTES.put(id, {p, dth}, {expirationTtl})
-        └─ bar=true  ─▶ id="b…" ─▶ BURN.get(idFromName(id)).create(paste, dth, ttl)
+create ── bar=true, expire=1day ─▶ id="b…" ─▶ BURN…create(paste, dth, 86400)
+          other lifecycle values ─▶ 400 (legacy records remain readable/deletable)
 
 read   ─┬─ id[0]="k" ─▶ PASTES.get → 200 | 404
-        ├─ id[0]="b" ─▶ BURN…consume() → 200 (once) | 410
-        └─ id[0]="b" + ?meta=1 ─▶ BURN…peek() → 200 head (no consume) | 410
+        └─ id[0]="b" ─▶ BURN…peek() → 200 head (no consume) | 410
+
+consume ─ POST + X-Burn-Intent ─▶ BURN…consume() → 200 (once) | 410
 ```
 
 ## Modules
@@ -77,7 +79,7 @@ asset** and the **Worker bundles the same file** — one source of truth for the
 | `public/js/qrcode.js` | browser | vendored MIT `qrcode-generator` (rendered as a `data:` image) |
 | `src/index.js` | worker | API routing, size guard, id allocation, error mapping |
 | `src/burn-do.js` | worker | `BurnPaste` Durable Object |
-| `src/lib/{ids,store,ratelimit}.js` | worker | id/token gen + hashing, KV/DO routing + expiry, rate-limit wrapper |
+| `src/lib/{ids,store,ratelimit,stars,statistics}.js` | worker | ids/tokens, legacy KV + DO routing, rate limiting, Star snapshots, anonymous counts |
 
 ### The CLI client
 

@@ -6,7 +6,26 @@ versioned separately from the application (see [`SPEC.md`](./SPEC.md), currently
 
 ## [Unreleased]
 
+### Changed
+
+- New pastes are always one-time view and expire in 24 hours. The API rejects other lifecycle
+  values; legacy links remain readable and deletable. CLI `create --json` now emits only
+  `url`, `id` and `deletetoken`. Format v1 and frozen cryptographic vectors are unchanged.
+- The Star badge reads a KV snapshot refreshed daily at 00:00 UTC. Failed refreshes preserve
+  the last count; the endpoint returns 503 until a snapshot is available.
+
+### Fixed
+
+- Consume failures distinguish HTTP rejection from an ambiguous lost response without retrying
+  a destructive read. All new web messages and controls support English and Chinese.
+- Highlighter comments beginning with a hex-like `#` retain their complete source text.
+
 ### Added
+
+- Download decrypted text, view raw/formatted source, detect common source languages and
+  highlight fenced Markdown code blocks safely.
+- Public anonymous creation statistics at `/api/statistics`, counted best-effort after storage
+  succeeds without retaining paste or visitor identifiers.
 
 - **GitHub star badge in the topbar** — the mark, a hairline divider, a star and the live
   count, linking to the repository. The count comes from `GET /api/stars`, a new Worker route
